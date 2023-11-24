@@ -300,7 +300,7 @@ def build_model(windows=7, denseblocks=4, layers=3, filters=96,
 
     for i in range(denseblocks - 1):
         # Add denseblock
-        x_1, filters_1 = denseblock(x_1, layers=layers,
+        x_1, filters_1 = denseblock(input_1, layers=layers,
                                     filters=filters, growth_rate=growth_rate,
                                     dropout_rate=dropout_rate, weight_decay=weight_decay)
         # Add BatchNormalization
@@ -390,16 +390,15 @@ if __name__ == '__main__':
     #
     train_onehot = np.array(to_one_hot(train_seqs)).astype(np.float32)
     train_properties = np.array(to_properties_code(train_seqs)).astype(np.float32)
-    train = np.concatenate((train_onehot, train_properties), axis=1)
+    train_all = np.concatenate((train_onehot, train_properties), axis=1)
 
 
     # label
-    train_label = np.array([1] * 386773 + [0] * 2923859).astype(np.float32)
+    train_all_label = np.array([1] * 386773 + [0] * 2923859).astype(np.float32)
     # train_label = to_categorical(train_label, num_classes=2)
 
-
-
-
+    train, test, train_label, test_label = train_test_split(train_all, train_all_label, test_size=0.2, shuffle=True,
+                                                            random_state=42)
 
 
     # build model
@@ -478,6 +477,44 @@ if __name__ == '__main__':
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
     plt.savefig('../images/5fold_ROC_Curve.jpg', dpi=1200, bbox_inches='tight')
+    plt.legend(loc='lower right')
+    plt.show()
+
+    train_label = to_categorical(train_label, num_classes=2)
+    test_label = to_categorical(test_label, num_classes=2)
+    
+    
+    # test
+    model.fit(x=train, y=train_label, validation_data=(test, test_label), epochs=EPOCHS,
+              batch_size=BATCH_SIZE, shuffle=True,
+              callbacks=[EarlyStopping(monitor='val_loss', patience=30, mode='auto')],
+              verbose=1)
+
+    model.save('../models/model_test.h5')
+
+    del model
+
+    model = load_model('../models/model_test.h5', custom_objects={'AttLayer': AttLayer})
+
+    test_score = model.predict(test)
+
+    # Sn, Sp, Acc, MCC, AUC
+    Sn, Sp, Acc, MCC = show_performance(test_label[:, 1], test_score[:, 1])
+    AUC = roc_auc_score(test_label[:, 1], test_score[:, 1])
+
+    print('-----------------------------------------------test---------------------------------------')
+    print('Sn = %f, Sp = %f, Acc = %f, MCC = %f, AUC = %f' % (Sn, Sp, Acc, MCC, AUC))
+    #
+    '''Mapping the ROC'''
+    plt.plot([0, 1], [0, 1], '--', color='red')
+    test_fpr, test_tpr, thresholds = roc_curve(test_label[:, 1], test_score[:, 1], pos_label=1)
+
+    plt.plot(test_fpr, test_tpr, color='b', label=r'test ROC (AUC=%0.4f)' % (AUC), lw=2, alpha=.8)
+
+    plt.title('ROC Curve OF')
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.savefig('../images/test_ROC_Curve.jpg', dpi=1200, bbox_inches='tight')
     plt.legend(loc='lower right')
     plt.show()
 
