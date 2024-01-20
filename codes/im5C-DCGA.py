@@ -23,6 +23,7 @@ from sklearn.linear_model import LogisticRegression
 from keras.layers import Layer,GaussianNoise,Embedding
 from keras import initializers
 from random import randint, choice
+from sklearn.metrics import precision_recall_curve, auc
 import h5py
 
 import warnings
@@ -115,7 +116,12 @@ def show_performance(y_true, y_pred):
 
     MCC = ((TP * TN) - (FP * FN)) / np.sqrt((TP + FP) * (TP + FN) * (TN + FP) * (TN + FN) + 1e-06)
 
-    return Sn, Sp, Acc, MCC
+    precision = TP / (TP + FP)
+    recall = TP / (TP + FN)
+
+    F1_score = 2 * (precision * recall) / (precision + recall)
+
+    return Sn, Sp, Acc, MCC, F1_score
 
 
 def performance_mean(performance):
@@ -124,6 +130,8 @@ def performance_mean(performance):
     print('Acc = %.4f ± %.4f' % (np.mean(performance[:, 2]), np.std(performance[:, 2])))
     print('Mcc = %.4f ± %.4f' % (np.mean(performance[:, 3]), np.std(performance[:, 3])))
     print('Auc = %.4f ± %.4f' % (np.mean(performance[:, 4]), np.std(performance[:, 4])))
+    print('F1_score = %.4f ± %.4f' % (np.mean(performance[:, 5]), np.std(performance[:, 5])))
+    print('pr_auc = %.4f ± %.4f' % (np.mean(performance[:, 6]), np.std(performance[:, 6])))
 
 # Channel Attention Module
 def channel_attention(input_feature, ratio=8):
@@ -373,7 +381,7 @@ if __name__ == '__main__':
 
     # read data
 
-    train_hep_pos_seqs = np.array(read_fasta('../Human hepatocellular carcinoma(HUH7_LIVER)/positive.fasta'))
+   train_hep_pos_seqs = np.array(read_fasta('../Human hepatocellular carcinoma(HUH7_LIVER)/positive.fasta'))
     train_hep_neg_seqs = np.array(read_fasta('../Human hepatocellular carcinoma(HUH7_LIVER)/negative.fasta'))
 
     train_nsmall_pos_seqs = np.array(read_fasta('../Human non-small cell lung cancer (NCIH2228_LUNG)/positive.fasta'))
@@ -384,22 +392,31 @@ if __name__ == '__main__':
 
     train_pos_seqs = np.concatenate((train_hep_pos_seqs, train_nsmall_pos_seqs, train_small_pos_seqs), axis=0)
     train_neg_seqs = np.concatenate((train_hep_neg_seqs, train_nsmall_neg_seqs, train_small_neg_seqs), axis=0)
-    train_seqs = np.concatenate((train_pos_seqs, train_neg_seqs), axis=0)
-
-    # coding
-    #
-    train_onehot = np.array(to_one_hot(train_seqs)).astype(np.float32)
-    train_properties = np.array(to_properties_code(train_seqs)).astype(np.float32)
-    train_all = np.concatenate((train_onehot, train_properties), axis=1)
+    # train_seqs = np.concatenate((train_pos_seqs, train_neg_seqs), axis=0)
 
 
-    # label
-    train_all_label = np.array([1] * 386773 + [0] * 2923859).astype(np.float32)
-    # train_label = to_categorical(train_label, num_classes=2)
 
-    train, test, train_label, test_label = train_test_split(train_all, train_all_label, test_size=0.2, shuffle=True,
+
+    train_pos_onehot = np.array(to_one_hot(train_pos_seqs)).astype(np.float32)
+    train_pos_properties = np.array(to_properties_code(train_pos_seqs)).astype(np.float32)
+    train_pos_all= np.concatenate((train_pos_onehot, train_pos_properties), axis=1)
+    train_pos_label = np.array([1] * 386773 ).astype(np.float32)
+
+    train_pos, test_pos, train_pos_label, test_pos_label = train_test_split(train_pos_all, train_pos_label, test_size=0.2, shuffle=True,
                                                             random_state=42)
 
+
+    train_neg_onehot = np.array(to_one_hot(train_neg_seqs)).astype(np.float32)
+    train_neg_properties = np.array(to_properties_code(train_neg_seqs)).astype(np.float32)
+    train_neg_all = np.concatenate((train_neg_onehot, train_neg_properties), axis=1)
+    train_neg_label = np.array([0] * 2923859).astype(np.float32)
+    train_neg, test_neg, train_neg_label, test_neg_label = train_test_split(train_neg_all, train_neg_label, test_size=0.2, shuffle=True,
+                                                            random_state=42)
+
+    train = np.concatenate((train_pos, train_neg), axis=0)
+    train_label = np.concatenate((train_pos_label, train_neg_label), axis=0)
+    test = np.concatenate((test_pos, test_neg), axis=0)
+    test_label = np.concatenate((test_pos_label, test_neg_label), axis=0)
 
     # build model
 
@@ -442,14 +459,15 @@ if __name__ == '__main__':
         val_pred = model.predict(val, verbose=1)
 
 
-        # Sn, Sp, Acc, MCC, AUC
-        Sn, Sp, Acc, MCC = show_performance(val_label[:, 1], val_pred[:, 1])
+        # Sn, Sp, Acc, MCC, AUC, F1_score, pr_auc
+        Sn, Sp, Acc, MCC, F1_score = show_performance(val_label[:, 1], val_pred[:, 1])
         AUC = roc_auc_score(val_label[:, 1], val_pred[:, 1])
+        precision, recall, thresholds = precision_recall_curve(val_label[:, 1], val_pred[:, 1])
+        pr_auc = auc(recall, precision)
         print('-----------------------------------------------val---------------------------------------')
-        print('Sn = %f, Sp = %f, Acc = %f, MCC = %f, AUC = %f' % (Sn, Sp, Acc, MCC, AUC))
+        print('Sn = %f, Sp = %f, Acc = %f, MCC = %f, AUC = %f, F1_score = %f, pr_auc = %f' % (Sn, Sp, Acc, MCC, AUC, F1_score, pr_auc))
 
-
-        val_performance = [Sn, Sp, Acc, MCC, AUC]
+        val_performance = [Sn, Sp, Acc, MCC, AUC, F1_score, pr_auc]
         all_performance.append(val_performance)
         pd.DataFrame(val_performance).to_csv('../pre_file/model_fold' + str(fold_count+1) + '.csv', index=False)
 
@@ -498,12 +516,14 @@ if __name__ == '__main__':
 
     test_score = model.predict(test)
 
-    # Sn, Sp, Acc, MCC, AUC
-    Sn, Sp, Acc, MCC = show_performance(test_label[:, 1], test_score[:, 1])
+    # Sn, Sp, Acc, MCC, AUC, F1_score, pr_auc
+    Sn, Sp, Acc, MCC, F1_score = show_performance(test_label[:, 1], test_score[:, 1])
     AUC = roc_auc_score(test_label[:, 1], test_score[:, 1])
-
+    precision, recall, thresholds = precision_recall_curve(test_label[:, 1], test_score[:, 1])
+    pr_auc = auc(recall, precision)
     print('-----------------------------------------------test---------------------------------------')
-    print('Sn = %f, Sp = %f, Acc = %f, MCC = %f, AUC = %f' % (Sn, Sp, Acc, MCC, AUC))
+    print('Sn = %f, Sp = %f, Acc = %f, MCC = %f, AUC = %f, F1_score = %f, pr_auc = %f' % (Sn, Sp, Acc, MCC, AUC, F1_score, pr_auc))
+
     #
     '''Mapping the ROC'''
     plt.plot([0, 1], [0, 1], '--', color='red')
